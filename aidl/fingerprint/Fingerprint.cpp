@@ -55,7 +55,11 @@ Fingerprint::Fingerprint()
 #ifdef USES_UDFPS_SENSOR
       : mSensorType(FingerprintSensorType::UNDER_DISPLAY_OPTICAL),
 #else
+#ifdef USES_SFPS_SENSOR
+      : mSensorType(FingerprintSensorType::POWER_BUTTON),
+#else
       : mSensorType(FingerprintSensorType::UNKNOWN),
+#endif
 #endif
       mMaxEnrollmentsPerUser(MAX_ENROLLMENTS_PER_USER),
       mSupportsGestures(false),
@@ -176,6 +180,12 @@ ndk::ScopedAStatus Fingerprint::getSensorProps(std::vector<SensorProps>* out) {
     x = UDFPS_LOCATION_X;
     y = UDFPS_LOCATION_Y;
     r = UDFPS_RADIUS;
+#endif
+
+#ifdef USES_SFPS_SENSOR
+    x = SFPS_LOCATION_X;
+    y = SFPS_LOCATION_Y;
+    r = SFPS_RADIUS;
 #endif
 
     if (x >= 0 && y >= 0 && r >= 0) {
