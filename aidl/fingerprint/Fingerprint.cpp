@@ -8,6 +8,12 @@
 
 #include <fingerprint.sysprop.h>
 
+#include <binder/IServiceManager.h>
+#include <binder/IBinder.h>
+#include <gui/ISurfaceComposer.h>
+#include <gui/SurfaceComposerClient.h>
+#include <gui/DisplayInfo.h>
+
 #include <android-base/logging.h>
 #include <android-base/parseint.h>
 #include <android-base/strings.h>
@@ -186,6 +192,29 @@ ndk::ScopedAStatus Fingerprint::getSensorProps(std::vector<SensorProps>* out) {
         SENSOR_ID, SENSOR_STRENGTH, mMaxEnrollmentsPerUser, componentInfo
     };
 
+    // Fetch displayId using SurfaceFlinger via Binder
+    sp<IBinder> binder = defaultServiceManager()->getService(String16("SurfaceFlinger"));
+    if (binder == nullptr) {
+        ALOGE("Failed to get SurfaceFlinger service");
+        return location;
+    }
+
+    sp<ISurfaceComposer> composer = interface_cast<ISurfaceComposer>(binder);
+    if (composer == nullptr) {
+        ALOGE("Failed to get ISurfaceComposer interface");
+        return location;
+    }
+
+    DisplayInfo displayInfo;
+    status_t status = composer->getDisplayInfo(displayToken, &displayInfo);
+    if (status != NO_ERROR) {
+        ALOGE("Failed to get display info");
+        return location;
+    }
+
+    // The fetched displayId
+    std::string displayId = std::to_string(displayInfo.displayId);
+
     SensorLocation sensorLocation;
     std::string loc = FingerprintHalProperties::sensor_location().value_or("");
     std::vector<std::string> dim = Split(loc, "|");
@@ -194,8 +223,7 @@ ndk::ScopedAStatus Fingerprint::getSensorProps(std::vector<SensorProps>* out) {
         ParseInt(dim[1], &sensorLocation.sensorLocationY);
         ParseInt(dim[2], &sensorLocation.sensorRadius);
 
-        if (dim.size() >= 4)
-            sensorLocation.display = dim[3];
+	sensorLocation.display = displayId;
     } else if(loc.length() > 0) {
         LOG(WARNING) << "Invalid sensor location input (x|y|radius|display): " << loc;
     }
