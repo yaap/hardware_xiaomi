@@ -213,7 +213,7 @@ typedef struct fingerprint_device {
     int (*enumerate)(struct fingerprint_device *dev);
 
     /*
-     * Fingerprint remove request:
+     * Fingerprint remove and removeTemplates request:
      * Deletes a fingerprint template.
      * Works only within the path set by set_active_group().
      * The fid parameter can be used as a widcard:
@@ -228,7 +228,8 @@ typedef struct fingerprint_device {
      * Function return: 0 if fingerprint template(s) can be successfully deleted
      *                  or a negative number in case of error, generally from the errno.h set.
      */
-    int (*remove)(struct fingerprint_device *dev, uint32_t gid, uint32_t fid);
+    int (*remove)(struct fingerprint_device* dev, uint32_t gid, uint32_t fid);
+    int (*removeTemplates)(struct fingerprint_device* dev, uint32_t gid, uint32_t fid);
 
     /*
      * Restricts the HAL operation to a set of fingerprints belonging to a

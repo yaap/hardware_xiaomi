@@ -105,7 +105,7 @@ ndk::ScopedAStatus Session::removeEnrollments(const std::vector<int32_t>& enroll
     ALOGI("removeEnrollments, size: %zu", enrollmentIds.size());
 
     for (int32_t fid : enrollmentIds) {
-        int error = mDevice->remove(mDevice, mUserId, fid);
+        int error = mDevice->removeTemplates(mDevice, mUserId, fid);
         if (error) {
             ALOGE("remove failed: %d", error);
         }
