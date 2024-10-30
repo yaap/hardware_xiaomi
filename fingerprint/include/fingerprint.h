@@ -252,6 +252,11 @@ typedef struct fingerprint_device {
     int (*authenticate)(struct fingerprint_device *dev, uint64_t operation_id, uint32_t gid);
 
     /*
+     * Reset the timeout when user authenticates with strong auth (e.g. PIN, pattern or password)
+     */    
+    int (*resetLockout)(struct fingerprint_device* dev, const hw_auth_token_t* hat);
+
+    /*
      * Xiaomi fingerprint extension command.
      */
     int (*extCmd)(struct fingerprint_device* dev, int32_t cmd, int32_t param);

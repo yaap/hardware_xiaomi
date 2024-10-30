@@ -130,9 +130,15 @@ ndk::ScopedAStatus Session::invalidateAuthenticatorId() {
     return ndk::ScopedAStatus::ok();
 }
 
-ndk::ScopedAStatus Session::resetLockout(const HardwareAuthToken& /*hat*/) {
+ndk::ScopedAStatus Session::resetLockout(const HardwareAuthToken& hat) {
     ALOGI("resetLockout");
-
+    hw_auth_token_t authToken;
+    translate(hat, authToken);
+    int error = mDevice->resetLockout(mDevice, &authToken);
+    if (error) {
+        ALOGE("resetLockout failed: %d", error);
+        mCb->onError(Error::UNABLE_TO_PROCESS, error);
+    }
     clearLockout(true);
     mIsLockoutTimerAborted = true;
 
