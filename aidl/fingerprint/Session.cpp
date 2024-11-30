@@ -36,7 +36,7 @@ Session::Session(fingerprint_device_t* device, UdfpsHandler* udfpsHandler, int u
 }
 
 ndk::ScopedAStatus Session::generateChallenge() {
-    uint64_t challenge = mDevice->pre_enroll(mDevice);
+    uint64_t challenge = mDevice->generate_challenge(mDevice);
     ALOGI("generateChallenge: %ld", challenge);
     mCb->onChallengeGenerated(challenge);
 
@@ -45,7 +45,11 @@ ndk::ScopedAStatus Session::generateChallenge() {
 
 ndk::ScopedAStatus Session::revokeChallenge(int64_t challenge) {
     ALOGI("revokeChallenge: %ld", challenge);
-    mDevice->post_enroll(mDevice);
+    int error = mDevice->revoke_challenge(mDevice, challenge);
+    if (error) {
+        ALOGE("revokeChallenge failed: %d", error);
+        mCb->onError(Error::UNABLE_TO_PROCESS, error);
+    }
     mCb->onChallengeRevoked(challenge);
 
     return ndk::ScopedAStatus::ok();
@@ -105,7 +109,7 @@ ndk::ScopedAStatus Session::removeEnrollments(const std::vector<int32_t>& enroll
     ALOGI("removeEnrollments, size: %zu", enrollmentIds.size());
 
     for (int32_t fid : enrollmentIds) {
-        int error = mDevice->removeTemplates(mDevice, mUserId, fid);
+        int error = mDevice->remove(mDevice, mUserId, fid);
         if (error) {
             ALOGE("remove failed: %d", error);
         }
@@ -126,6 +130,11 @@ ndk::ScopedAStatus Session::getAuthenticatorId() {
 ndk::ScopedAStatus Session::invalidateAuthenticatorId() {
     uint64_t auth_id = mDevice->get_authenticator_id(mDevice);
     ALOGI("invalidateAuthenticatorId: %ld", auth_id);
+    int error = mDevice->invalidate_authenticator_id(mDevice, auth_id);
+    if (error) {
+        ALOGE("invalidateAuthenticatorId failed: %d", error);
+        mCb->onError(Error::UNABLE_TO_PROCESS, error);
+    }
     mCb->onAuthenticatorIdInvalidated(auth_id);
     return ndk::ScopedAStatus::ok();
 }
@@ -134,9 +143,9 @@ ndk::ScopedAStatus Session::resetLockout(const HardwareAuthToken& hat) {
     ALOGI("resetLockout");
     hw_auth_token_t authToken;
     translate(hat, authToken);
-    int error = mDevice->resetLockout(mDevice, &authToken);
+    int error = mDevice->reset_lockout(mDevice, &authToken);
     if (error) {
-        ALOGE("resetLockout failed: %d", error);
+        ALOGE("resetlockout failed: %d", error);
         mCb->onError(Error::UNABLE_TO_PROCESS, error);
     }
     clearLockout(true);
