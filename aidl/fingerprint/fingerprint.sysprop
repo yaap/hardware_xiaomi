@@ -33,7 +33,7 @@ prop {
     api_name: "sensor_location"
 }
 
-# sensor id (default: 0)
+# sensor id (default: 5)
 prop {
     prop_name: "persist.vendor.fingerprint.sensor_id"
     type: Integer
