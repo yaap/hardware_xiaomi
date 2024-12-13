@@ -97,7 +97,8 @@ ndk::ScopedAStatus Session::detectInteraction(std::shared_ptr<ICancellationSigna
 ndk::ScopedAStatus Session::enumerateEnrollments() {
     ALOGI("enumerateEnrollments");
 
-    int error = mDevice->enumerate(mDevice);
+    uint32_t group_id = 0;
+    int error = mDevice->enumerate(mDevice, group_id);
     if (error) {
         ALOGE("enumerate failed: %d", error);
     }
