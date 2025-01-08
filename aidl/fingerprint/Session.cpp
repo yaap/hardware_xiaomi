@@ -30,24 +30,17 @@ Session::Session(fingerprint_device_t* device, UdfpsHandler* udfpsHandler, int u
       mUdfpsHandler(udfpsHandler) {
     mDeathRecipient = AIBinder_DeathRecipient_new(onClientDeath);
 
-    char path[256];
-    snprintf(path, sizeof(path), "/data/vendor_de/%d/fpdata/", userId);
-    mDevice->set_active_group(mDevice, mUserId, path);
+    auto path = std::format("/data/vendor_de/{}/fpdata/", userId);
+    mDevice->set_active_group(mDevice, mUserId, path.c_str());
 }
 
 ndk::ScopedAStatus Session::generateChallenge() {
-    uint64_t challenge = mDevice->pre_enroll(mDevice);
-    ALOGI("generateChallenge: %ld", challenge);
-    mCb->onChallengeGenerated(challenge);
-
+    uint64_t challenge = mDevice->generate_challenge(mDevice);
     return ndk::ScopedAStatus::ok();
 }
 
 ndk::ScopedAStatus Session::revokeChallenge(int64_t challenge) {
-    ALOGI("revokeChallenge: %ld", challenge);
-    mDevice->post_enroll(mDevice);
-    mCb->onChallengeRevoked(challenge);
-
+    mDevice->revoke_challenge(mDevice, challenge);
     return ndk::ScopedAStatus::ok();
 }
 
@@ -55,7 +48,7 @@ ndk::ScopedAStatus Session::enroll(const HardwareAuthToken& hat,
                                    std::shared_ptr<ICancellationSignal>* out) {
     hw_auth_token_t authToken;
     translate(hat, authToken);
-    int error = mDevice->enroll(mDevice, &authToken, mUserId, 60);
+    int error = mDevice->enroll(mDevice, &authToken);
     if (error) {
         ALOGE("enroll failed: %d", error);
         mCb->onError(Error::UNABLE_TO_PROCESS, error);
@@ -67,8 +60,7 @@ ndk::ScopedAStatus Session::enroll(const HardwareAuthToken& hat,
 
 ndk::ScopedAStatus Session::authenticate(int64_t operationId,
                                          std::shared_ptr<ICancellationSignal>* out) {
-    checkSensorLockout();
-    int error = mDevice->authenticate(mDevice, operationId, mUserId);
+    int error = mDevice->authenticate(mDevice, operationId);
     if (error) {
         ALOGE("authenticate failed: %d", error);
         mCb->onError(Error::UNABLE_TO_PROCESS, error);
@@ -98,19 +90,16 @@ ndk::ScopedAStatus Session::enumerateEnrollments() {
 ndk::ScopedAStatus Session::removeEnrollments(const std::vector<int32_t>& enrollmentIds) {
     ALOGI("removeEnrollments, size: %zu", enrollmentIds.size());
 
-    for (int32_t fid : enrollmentIds) {
-        int error = mDevice->remove(mDevice, mUserId, fid);
-        if (error) {
-            ALOGE("remove failed: %d", error);
-        }
+    int error = mDevice->remove(mDevice, enrollmentIds.data(), enrollmentIds.size());
+    if (error) {
+        ALOGE("remove failed: %d", error);
     }
+
     return ndk::ScopedAStatus::ok();
 }
 
 ndk::ScopedAStatus Session::getAuthenticatorId() {
     uint64_t auth_id = mDevice->get_authenticator_id(mDevice);
-    ALOGI("getAuthenticatorId: %ld", auth_id);
-    mCb->onAuthenticatorIdRetrieved(auth_id);
     return ndk::ScopedAStatus::ok();
 }
 
@@ -121,9 +110,9 @@ ndk::ScopedAStatus Session::invalidateAuthenticatorId() {
     return ndk::ScopedAStatus::ok();
 }
 
-ndk::ScopedAStatus Session::resetLockout(const HardwareAuthToken& /*hat*/) {
+ndk::ScopedAStatus Session::resetLockout(const HardwareAuthToken& hat) {
     clearLockout(true);
-    if (mIsLockoutTimerStarted) mIsLockoutTimerAborted = true;
+    mIsLockoutTimerAborted = true;
 
     return ndk::ScopedAStatus::ok();
 }
@@ -133,6 +122,8 @@ ndk::ScopedAStatus Session::onPointerDown(int32_t /*pointerId*/, int32_t x, int3
     if (mUdfpsHandler) {
         mUdfpsHandler->onFingerDown(x, y, minor, major);
     }
+    checkSensorLockout();
+
     return ndk::ScopedAStatus::ok();
 }
 
@@ -145,7 +136,9 @@ ndk::ScopedAStatus Session::onPointerUp(int32_t /*pointerId*/) {
 }
 
 ndk::ScopedAStatus Session::onUiReady() {
-    // TODO: stub
+    if (mUdfpsHandler) {
+        mUdfpsHandler->onUiReady();
+    }
 
     return ndk::ScopedAStatus::ok();
 }
@@ -277,8 +270,9 @@ AcquiredInfo Session::VendorAcquiredFilter(int32_t info, int32_t* vendorCode) {
                 return AcquiredInfo::VENDOR;
             }
     }
+
     ALOGE("Unknown acquired message from fingerprint vendor library: %d", info);
-    return AcquiredInfo::UNKNOWN;
+    return AcquiredInfo::INSUFFICIENT;
 }
 
 bool Session::checkSensorLockout() {
@@ -288,6 +282,7 @@ bool Session::checkSensorLockout() {
         mCb->onLockoutPermanent();
         mIsLockoutTimerAborted = true;
         return true;
+
     } else if (lockoutMode == LockoutTracker::LockoutMode::kTimed) {
         int64_t timeLeft = mLockoutTracker.getLockoutTimeLeft();
         ALOGE("Fail: lockout timed: %ld", timeLeft);
@@ -304,6 +299,7 @@ void Session::clearLockout(bool clearAttemptCounter) {
 }
 
 void Session::startLockoutTimer(int64_t timeout) {
+    mIsLockoutTimerAborted = false;
     std::function<void()> action = std::bind(&Session::lockoutTimerExpired, this);
     std::thread([timeout, action]() {
         std::this_thread::sleep_for(std::chrono::milliseconds(timeout));
@@ -345,21 +341,20 @@ void Session::notify(const fingerprint_msg_t* msg) {
             }
         } break;
         case FINGERPRINT_TEMPLATE_ENROLLING: {
-            ALOGD("onEnrollResult(fid=%d, gid=%d, rem=%d)", msg->data.enroll.finger.fid,
-                  msg->data.enroll.finger.gid, msg->data.enroll.samples_remaining);
-            mCb->onEnrollmentProgress(msg->data.enroll.finger.fid,
+            ALOGD("onEnrollResult(fid=%d, rem=%d)", msg->data.enroll.fid,
+                  msg->data.enroll.samples_remaining);
+            mCb->onEnrollmentProgress(msg->data.enroll.fid,
                                       msg->data.enroll.samples_remaining);
         } break;
         case FINGERPRINT_TEMPLATE_REMOVED: {
-            ALOGD("onRemove(fid=%d, gid=%d, rem=%d)", msg->data.removed.finger.fid,
-                  msg->data.removed.finger.gid, msg->data.removed.remaining_templates);
+            ALOGD("onRemove(fid=%d, rem=%d)", msg->data.removed.fid,
+                  msg->data.removed.remaining_templates);
             std::vector<int> enrollments;
-            enrollments.push_back(msg->data.removed.finger.fid);
+            enrollments.push_back(msg->data.removed.fid);
             mCb->onEnrollmentsRemoved(enrollments);
         } break;
         case FINGERPRINT_AUTHENTICATED: {
-            ALOGD("onAuthenticated(fid=%d, gid=%d)", msg->data.authenticated.finger.fid,
-                  msg->data.authenticated.finger.gid);
+            ALOGD("onAuthenticated(fid=%d)", msg->data.authenticated.finger.fid);
             if (msg->data.authenticated.finger.fid != 0) {
                 const hw_auth_token_t hat = msg->data.authenticated.hat;
                 HardwareAuthToken authToken;
@@ -372,17 +367,43 @@ void Session::notify(const fingerprint_msg_t* msg) {
                 mLockoutTracker.addFailedAttempt();
                 checkSensorLockout();
             }
+            if (mUdfpsHandler) {
+                mUdfpsHandler->onFingerUp();
+            }
         } break;
         case FINGERPRINT_TEMPLATE_ENUMERATING: {
-            ALOGD("onEnumerate(fid=%d, gid=%d, rem=%d)", msg->data.enumerated.finger.fid,
-                  msg->data.enumerated.finger.gid, msg->data.enumerated.remaining_templates);
+            ALOGD("onEnumerate(fid=%d, rem=%d)", msg->data.enumerated.fid,
+                  msg->data.enumerated.remaining_templates);
             static std::vector<int> enrollments;
-            enrollments.push_back(msg->data.enumerated.finger.fid);
+            enrollments.push_back(msg->data.enumerated.fid);
             if (msg->data.enumerated.remaining_templates == 0) {
                 mCb->onEnrollmentsEnumerated(enrollments);
                 enrollments.clear();
             }
         } break;
+        case FINGERPRINT_CHALLENGE_GENERATED: {
+            int64_t challenge = msg->data.extend.data;
+            ALOGD("onChallengeGenerated: %ld", challenge);
+            mCb->onChallengeGenerated(challenge);
+        } break;
+        case FINGERPRINT_CHALLENGE_REVOKED: {
+            int64_t error = msg->data.extend.data;
+            ALOGD("onChallengeRevoked: %ld", error);
+        } break;
+        case FINGERPRINT_AUTHENTICATOR_ID_RETRIEVED: {
+            int auth_id = msg->data.extend.data;
+            ALOGD("onAuthenticatorIDRetrieved: %d", auth_id);
+            mCb->onAuthenticatorIdRetrieved(auth_id);
+            if (mUdfpsHandler) {
+                mUdfpsHandler->onFingerUp();
+            }
+        } break;
+        case FINGERPRINT_AUTHENTICATOR_ID_INVALIDATED: {
+            int64_t error = msg->data.extend.data;
+            ALOGD("onAuthenticatorIDInvalidated: %ld", error);
+        } break;
+        default:
+            ALOGE("received unknown message:%d", msg->type);
     }
 }
 
