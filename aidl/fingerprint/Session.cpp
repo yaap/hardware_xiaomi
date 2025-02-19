@@ -104,13 +104,13 @@ ndk::ScopedAStatus Session::getAuthenticatorId() {
 }
 
 ndk::ScopedAStatus Session::invalidateAuthenticatorId() {
-    uint64_t auth_id = mDevice->get_authenticator_id(mDevice);
+    uint64_t auth_id = mDevice->invalidate_authenticator_id(mDevice);
     ALOGI("invalidateAuthenticatorId: %ld", auth_id);
     mCb->onAuthenticatorIdInvalidated(auth_id);
     return ndk::ScopedAStatus::ok();
 }
 
-ndk::ScopedAStatus Session::resetLockout(const HardwareAuthToken& hat) {
+ndk::ScopedAStatus Session::resetLockout(const HardwareAuthToken& /*hat*/) {
     clearLockout(true);
     mIsLockoutTimerAborted = true;
 

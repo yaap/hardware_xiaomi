@@ -176,7 +176,7 @@ std::vector<SensorLocation> Fingerprint::getSensorLocations() {
             }
         } else {
             int32_t x, y, r;
-            std::string d = "";
+            std::string d;
             isValidStr = ParseInt(dim[0], &x) && ParseInt(dim[1], &y) && ParseInt(dim[2], &r);
             if (dim.size() == 4) {
                 d = dim[3];
